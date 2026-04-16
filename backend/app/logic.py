@@ -1,7 +1,38 @@
 from datetime import datetime, timedelta
 
 
-def next_runs(start: datetime, interval_hours: int, count: int) -> list[datetime]:
+UTC_SUFFIX = 'Z'
+
+
+def to_zulu(value: datetime) -> str:
+    return value.isoformat().replace('+00:00', UTC_SUFFIX)
+
+
+def floor_to_hour(value: datetime) -> datetime:
+    return value.replace(minute=0, second=0, microsecond=0)
+
+
+def current_due_slot(anchor: datetime, interval_hours: int, now: datetime) -> datetime | None:
+    if interval_hours <= 0:
+        return None
+    if now < anchor:
+        return None
+    interval_seconds = interval_hours * 3600
+    elapsed_seconds = int((now - anchor).total_seconds())
+    slot_index = elapsed_seconds // interval_seconds
+    return anchor + timedelta(hours=slot_index * interval_hours)
+
+
+def next_due_slot(anchor: datetime, interval_hours: int, now: datetime) -> datetime:
+    current_slot = current_due_slot(anchor, interval_hours, now)
+    if current_slot is None:
+        return anchor
+    if current_slot == now:
+        return current_slot
+    return current_slot + timedelta(hours=interval_hours)
+
+
+def preview_runs(start: datetime, interval_hours: int, count: int) -> list[datetime]:
     return [start + timedelta(hours=interval_hours * index) for index in range(count)]
 
 

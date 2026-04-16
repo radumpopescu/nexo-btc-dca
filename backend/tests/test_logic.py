@@ -1,16 +1,23 @@
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from app.logic import next_runs, projected_hours_remaining, should_low_balance_alert
+from app.logic import current_due_slot, next_due_slot, preview_runs, projected_hours_remaining, should_low_balance_alert
 
 
-def test_next_runs_every_four_hours():
+def test_preview_runs_every_four_hours():
     start = datetime(2026, 4, 16, 8, 0, tzinfo=timezone.utc)
-    runs = next_runs(start, interval_hours=4, count=3)
+    runs = preview_runs(start, interval_hours=4, count=3)
     assert runs == [
         datetime(2026, 4, 16, 8, 0, tzinfo=timezone.utc),
         datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc),
         datetime(2026, 4, 16, 16, 0, tzinfo=timezone.utc),
     ]
+
+
+def test_current_due_slot_finds_latest_due_time():
+    anchor = datetime(2026, 4, 16, 8, 0, tzinfo=timezone.utc)
+    now = datetime(2026, 4, 16, 13, 15, tzinfo=timezone.utc)
+    assert current_due_slot(anchor, interval_hours=4, now=now) == datetime(2026, 4, 16, 12, 0, tzinfo=timezone.utc)
+    assert next_due_slot(anchor, interval_hours=4, now=now) == datetime(2026, 4, 16, 16, 0, tzinfo=timezone.utc)
 
 
 def test_projected_hours_remaining_for_balance_cover():

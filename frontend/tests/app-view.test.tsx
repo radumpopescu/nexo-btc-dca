@@ -5,7 +5,7 @@ import { AppView } from '../src/AppView'
 import { MOCK_STATE } from '../src/mock'
 
 describe('AppView', () => {
-  it('renders persisted schedule controls and recent mock orders', () => {
+  it('renders editable persisted settings and storage location', () => {
     const html = renderToStaticMarkup(
       <AppView
         data={MOCK_STATE}
@@ -26,11 +26,10 @@ describe('AppView', () => {
       />,
     )
 
-    expect(html).toContain('Persisted mock mode')
     expect(html).toContain('Persisted settings')
-    expect(html).toContain('Run due mock buy now')
     expect(html).toContain('Save settings')
+    expect(html).toContain('Run due mock buy now')
     expect(html).toContain('Storage')
-    expect(html).toContain('Recent mock orders')
+    expect(html).toContain('data/nexo-dca.sqlite3')
   })
 })
