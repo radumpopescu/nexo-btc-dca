@@ -1,17 +1,9 @@
 services:
-  backend:
+  app:
     build:
       context: .
       dockerfile: backend/Dockerfile
     env_file:
       - .env
     ports:
-      - "8000:8000"
-  frontend:
-    build:
-      context: .
-      dockerfile: frontend/Dockerfile
-    ports:
-      - "4173:4173"
-    depends_on:
-      - backend
+      - "4613:4613"

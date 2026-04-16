@@ -6,9 +6,9 @@ What works now
 - Configurable DCA schedule model (for example $6.90 every 4h)
 - Mock backend API showing when the app says "Should buy now"
 - Telegram/low-balance notification settings represented in UI
-- Docker Compose setup
+- Single-port Docker Compose setup
 - .env.example for secrets and runtime config
-- Frontend UI for overview/settings/recent mock orders
+- Frontend UI for overview/settings/recent mock orders, served by the backend container
 
 What is mocked
 - Actual Nexo buy execution
@@ -21,6 +21,6 @@ Run locally
 - cp .env.example .env
 - docker compose -f compose.yml up --build
 
-Ports
-- frontend: http://localhost:4173
-- backend: http://localhost:8000/api/state
+Port
+- app: http://localhost:4613
+- api state: http://localhost:4613/api/state
