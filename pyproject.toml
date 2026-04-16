@@ -11,5 +11,8 @@ dependencies = [
   "pydantic>=2.8"
 ]
 
+[tool.setuptools]
+packages = { find = { include = ["backend", "backend.*"] } }
+
 [tool.pytest.ini_options]
 pythonpath = ["backend"]
