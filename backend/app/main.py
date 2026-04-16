@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -25,8 +25,8 @@ def create_app(db: Database | None = None, now_provider=None) -> FastAPI:
     database.initialize()
 
     @app.get('/api/state')
-    def get_state():
-        return database.build_state_payload(current_time())
+    def get_state(date_from: date | None = None, date_to: date | None = None):
+        return database.build_state_payload(current_time(), date_from=date_from, date_to=date_to)
 
     @app.put('/api/settings')
     def update_settings(update: SettingsUpdate):

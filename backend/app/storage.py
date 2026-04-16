@@ -1,9 +1,9 @@
 import sqlite3
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 from .logic import current_due_slot, floor_to_hour, next_due_slot, preview_runs, projected_hours_remaining, should_low_balance_alert
-from .models import AppState, MockOrder, NotificationSettings, ScheduleSettings, SettingsUpdate
+from .models import ActivitySummary, AppState, MockOrder, NotificationSettings, ScheduleSettings, SettingsUpdate
 
 
 class Database:
@@ -45,6 +45,10 @@ class Database:
                 )
                 '''
             )
+            self._ensure_column(connection, 'app_state', 'btc_balance', 'REAL NOT NULL DEFAULT 0')
+            self._ensure_column(connection, 'app_state', 'btc_price', 'REAL NOT NULL DEFAULT 100000')
+            self._ensure_column(connection, 'mock_runs', 'base_amount', 'REAL NOT NULL DEFAULT 0')
+            self._ensure_column(connection, 'mock_runs', 'price_usdc', 'REAL NOT NULL DEFAULT 0')
             existing = connection.execute('SELECT COUNT(*) FROM app_state').fetchone()[0]
             if existing == 0:
                 anchor = floor_to_hour(self.now_provider())
@@ -52,14 +56,16 @@ class Database:
                 connection.execute(
                     '''
                     INSERT INTO app_state (
-                        id, mode, usdc_balance, pair, amount_per_run, interval_hours,
+                        id, mode, usdc_balance, btc_balance, btc_price, pair, amount_per_run, interval_hours,
                         notify_on_buy, daily_summary, low_balance_threshold_hours,
                         schedule_anchor_at, updated_at
-                    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ''',
                     (
                         'mock',
                         138.0,
+                        0.0,
+                        100000.0,
                         'BTC/USDC',
                         6.9,
                         4,
@@ -92,6 +98,8 @@ class Database:
                 '''
                 UPDATE app_state
                 SET usdc_balance = ?,
+                    btc_balance = ?,
+                    btc_price = ?,
                     pair = ?,
                     amount_per_run = ?,
                     interval_hours = ?,
@@ -104,6 +112,8 @@ class Database:
                 ''',
                 (
                     update.usdc_balance,
+                    update.btc_balance,
+                    update.btc_price,
                     update.schedule.pair,
                     update.schedule.amount_per_run,
                     update.schedule.interval_hours,
@@ -123,18 +133,27 @@ class Database:
             row = connection.execute('SELECT 1 FROM mock_runs WHERE scheduled_for = ?', (slot.isoformat(),)).fetchone()
         return row is not None
 
-    def list_recent_orders(self, limit: int = 12) -> list[MockOrder]:
+    def list_recent_orders(self, date_from: date | None = None, date_to: date | None = None, limit: int = 200) -> list[MockOrder]:
         self.initialize()
+        clauses: list[str] = []
+        params: list[object] = []
+        if date_from is not None:
+            clauses.append('substr(scheduled_for, 1, 10) >= ?')
+            params.append(date_from.isoformat())
+        if date_to is not None:
+            clauses.append('substr(scheduled_for, 1, 10) <= ?')
+            params.append(date_to.isoformat())
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ''
+        query = f'''
+            SELECT scheduled_for, executed_at, pair, side, quote_amount, base_amount, price_usdc, status, message
+            FROM mock_runs
+            {where}
+            ORDER BY scheduled_for DESC
+            LIMIT ?
+        '''
+        params.append(limit)
         with self._connect() as connection:
-            rows = connection.execute(
-                '''
-                SELECT scheduled_for, executed_at, pair, side, quote_amount, status, message
-                FROM mock_runs
-                ORDER BY scheduled_for DESC
-                LIMIT ?
-                ''',
-                (limit,),
-            ).fetchall()
+            rows = connection.execute(query, tuple(params)).fetchall()
         return [self._order_from_row(row) for row in rows]
 
     def run_due_mock_buy(self, now: datetime) -> tuple[bool, MockOrder | None, str]:
@@ -148,21 +167,25 @@ class Database:
         if state.usdc_balance + 1e-9 < state.schedule.amount_per_run:
             return False, None, 'Not enough USDC to cover the next buy.'
 
+        base_amount = round(state.schedule.amount_per_run / state.btc_price, 12)
         order = MockOrder(
             scheduled_for=due_slot,
             executed_at=now,
             pair=state.schedule.pair,
             quote_amount=state.schedule.amount_per_run,
+            base_amount=base_amount,
+            price_usdc=state.btc_price,
             status='mocked',
             message='Should buy now',
         )
         new_balance = round(state.usdc_balance - state.schedule.amount_per_run, 10)
+        new_btc_balance = round(state.btc_balance + base_amount, 12)
 
         with self._connect() as connection:
             connection.execute(
                 '''
-                INSERT INTO mock_runs (scheduled_for, executed_at, pair, side, quote_amount, status, message)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO mock_runs (scheduled_for, executed_at, pair, side, quote_amount, base_amount, price_usdc, status, message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''',
                 (
                     order.scheduled_for.isoformat(),
@@ -170,23 +193,33 @@ class Database:
                     order.pair,
                     order.side,
                     order.quote_amount,
+                    order.base_amount,
+                    order.price_usdc,
                     order.status,
                     order.message,
                 ),
             )
             connection.execute(
-                'UPDATE app_state SET usdc_balance = ?, updated_at = ? WHERE id = 1',
-                (new_balance, now.isoformat()),
+                'UPDATE app_state SET usdc_balance = ?, btc_balance = ?, updated_at = ? WHERE id = 1',
+                (new_balance, new_btc_balance, now.isoformat()),
             )
             connection.commit()
         return True, order, 'Mock buy recorded.'
 
-    def build_state_payload(self, now: datetime) -> dict:
+    def build_state_payload(self, now: datetime, date_from: date | None = None, date_to: date | None = None) -> dict:
         state = self.load_state()
         anchor = self.load_schedule_anchor()
         current_slot = current_due_slot(anchor, state.schedule.interval_hours, now)
         should_buy_now = current_slot is not None and not self.has_run_for_slot(current_slot)
         preview_start = current_slot if should_buy_now else next_due_slot(anchor, state.schedule.interval_hours, now)
+        filtered_orders = self.list_recent_orders(date_from=date_from, date_to=date_to)
+        btc_position_value = round(state.btc_balance * state.btc_price, 10)
+        total_usdc = round(state.usdc_balance + btc_position_value, 10)
+        activity_summary = ActivitySummary(
+            order_count=len(filtered_orders),
+            quote_spent=round(sum(order.quote_amount for order in filtered_orders), 10),
+            btc_bought=round(sum(order.base_amount for order in filtered_orders), 12),
+        )
         return {
             'state': state.model_dump(mode='json'),
             'schedule_preview': [slot.isoformat().replace('+00:00', 'Z') for slot in preview_runs(preview_start, state.schedule.interval_hours, 5)],
@@ -203,8 +236,25 @@ class Database:
             ),
             'should_buy_now': should_buy_now,
             'database_path': str(self.path),
-            'recent_orders': [order.model_dump(mode='json') for order in self.list_recent_orders()],
+            'account_value': {
+                'usdc_balance': round(state.usdc_balance, 10),
+                'btc_balance': round(state.btc_balance, 12),
+                'btc_price': round(state.btc_price, 10),
+                'btc_position_value': btc_position_value,
+                'total_usdc': total_usdc,
+            },
+            'filters': {
+                'date_from': date_from.isoformat() if date_from else '',
+                'date_to': date_to.isoformat() if date_to else '',
+            },
+            'activity_summary': activity_summary.model_dump(mode='json'),
+            'recent_orders': [order.model_dump(mode='json') for order in filtered_orders],
         }
+
+    def _ensure_column(self, connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        existing_columns = {row['name'] for row in connection.execute(f'PRAGMA table_info({table})').fetchall()}
+        if column not in existing_columns:
+            connection.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path)
@@ -215,6 +265,8 @@ class Database:
         return AppState(
             mode=row['mode'],
             usdc_balance=row['usdc_balance'],
+            btc_balance=row['btc_balance'],
+            btc_price=row['btc_price'],
             schedule=ScheduleSettings(
                 pair=row['pair'],
                 amount_per_run=row['amount_per_run'],
@@ -235,6 +287,8 @@ class Database:
             pair=row['pair'],
             side=row['side'],
             quote_amount=row['quote_amount'],
+            base_amount=row['base_amount'],
+            price_usdc=row['price_usdc'],
             status=row['status'],
             message=row['message'],
         )

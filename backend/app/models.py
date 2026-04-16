@@ -15,9 +15,17 @@ class NotificationSettings(BaseModel):
     low_balance_threshold_hours: int = Field(default=24, ge=1)
 
 
+class ActivitySummary(BaseModel):
+    order_count: int = 0
+    quote_spent: float = 0.0
+    btc_bought: float = 0.0
+
+
 class AppState(BaseModel):
     mode: str = 'mock'
     usdc_balance: float = Field(default=138.0, ge=0)
+    btc_balance: float = Field(default=0.0, ge=0)
+    btc_price: float = Field(default=100000.0, gt=0)
     schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
     notifications: NotificationSettings = Field(default_factory=NotificationSettings)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -25,6 +33,8 @@ class AppState(BaseModel):
 
 class SettingsUpdate(BaseModel):
     usdc_balance: float = Field(ge=0)
+    btc_balance: float = Field(default=0.0, ge=0)
+    btc_price: float = Field(default=100000.0, gt=0)
     schedule: ScheduleSettings
     notifications: NotificationSettings
 
@@ -35,5 +45,7 @@ class MockOrder(BaseModel):
     pair: str
     side: str = 'buy'
     quote_amount: float
+    base_amount: float = Field(default=0.0, ge=0)
+    price_usdc: float = Field(default=0.0, ge=0)
     status: str
     message: str

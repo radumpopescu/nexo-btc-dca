@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 
 import { AppView } from './AppView'
 import { MOCK_STATE } from './mock'
-import type { ApiState, FormState } from './types'
+import type { ApiState, Filters, FormState, PageId } from './types'
 
 function toFormState(data: ApiState): FormState {
   return {
     usdc_balance: data.state.usdc_balance,
+    btc_balance: data.state.btc_balance,
+    btc_price: data.state.btc_price,
     pair: data.state.schedule.pair,
     amount_per_run: data.state.schedule.amount_per_run,
     interval_hours: data.state.schedule.interval_hours,
@@ -16,27 +18,45 @@ function toFormState(data: ApiState): FormState {
   }
 }
 
+function buildStateUrl(filters: Filters) {
+  const params = new URLSearchParams()
+  if (filters.date_from) {
+    params.set('date_from', filters.date_from)
+  }
+  if (filters.date_to) {
+    params.set('date_to', filters.date_to)
+  }
+  const query = params.toString()
+  return query ? `/api/state?${query}` : '/api/state'
+}
+
 export default function App() {
   const [data, setData] = useState<ApiState>(MOCK_STATE)
   const [formState, setFormState] = useState<FormState>(() => toFormState(MOCK_STATE))
+  const [currentPage, setCurrentPage] = useState<PageId>('dashboard')
+  const [filters, setFilters] = useState<Filters>(() => ({ ...MOCK_STATE.filters }))
   const [busy, setBusy] = useState(false)
   const [statusMessage, setStatusMessage] = useState('')
 
-  async function refreshState() {
-    const response = await fetch('/api/state')
+  async function refreshState(nextFilters = filters) {
+    const response = await fetch(buildStateUrl(nextFilters))
     const payload: ApiState = await response.json()
     setData(payload)
     setFormState(toFormState(payload))
   }
 
   useEffect(() => {
-    refreshState().catch(() => setStatusMessage('Using fallback mock state because the API is unavailable.'))
-  }, [])
+    refreshState(filters).catch(() => setStatusMessage('Using fallback mock state because the API is unavailable.'))
+  }, [filters.date_from, filters.date_to])
 
-  const viewData = useMemo(() => data, [data])
+  const filteredOrders = useMemo(() => data.recent_orders, [data.recent_orders])
 
   function onFieldChange(field: keyof FormState, value: string | number | boolean) {
     setFormState((current) => ({ ...current, [field]: value }))
+  }
+
+  function onFilterChange(field: keyof Filters, value: string) {
+    setFilters((current) => ({ ...current, [field]: value }))
   }
 
   async function onSave() {
@@ -48,6 +68,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           usdc_balance: formState.usdc_balance,
+          btc_balance: formState.btc_balance,
+          btc_price: formState.btc_price,
           schedule: {
             pair: formState.pair,
             amount_per_run: formState.amount_per_run,
@@ -63,7 +85,7 @@ export default function App() {
       const payload: ApiState = await response.json()
       setData(payload)
       setFormState(toFormState(payload))
-      setStatusMessage('Saved to SQLite.')
+      setStatusMessage('Saved settings.')
     } catch {
       setStatusMessage('Save failed.')
     } finally {
@@ -77,9 +99,8 @@ export default function App() {
     try {
       const response = await fetch('/api/mock/run', { method: 'POST' })
       const payload = await response.json()
-      setData(payload.state)
-      setFormState(toFormState(payload.state))
       setStatusMessage(payload.message)
+      await refreshState(filters)
     } catch {
       setStatusMessage('Mock run failed.')
     } finally {
@@ -89,9 +110,14 @@ export default function App() {
 
   return (
     <AppView
-      data={viewData}
+      data={data}
       formState={formState}
+      currentPage={currentPage}
+      filteredOrders={filteredOrders}
+      filters={{ startDate: filters.date_from, endDate: filters.date_to }}
       onFieldChange={onFieldChange}
+      onFilterChange={(field, value) => onFilterChange(field === 'startDate' ? 'date_from' : 'date_to', value)}
+      onPageChange={setCurrentPage}
       onSave={onSave}
       onRunNow={onRunNow}
       busy={busy}
